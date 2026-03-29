@@ -5,7 +5,7 @@ description = ""
 requires-python = ">=3.10"
 dependencies = [
     "matplotlib",
-    "numpy>=1.26.4,<2.3",
+    "numpy",
 ]
 
 [tool.uv]
