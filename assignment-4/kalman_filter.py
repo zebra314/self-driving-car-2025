@@ -13,17 +13,49 @@ class KalmanFilter:
         self.S = np.identity(3) * 1
 
         # Observation matrix
-        self.C = None
+        self.C = np.array([
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0]
+        ])
 
         # State transition error
-        self.R = None
+        self.R = np.identity(3) * 1
 
         # Measurement error
-        self.Q = None
+        self.Q = np.identity(2) * 1
 
     def predict(self, u):
-        raise NotImplementedError
+        # raise NotImplementedError
+
+        # Predict the next state
+        # (3, 1) = (3, 3) @ (3, 1) + (3, 3) @ (3, 1)
+        self.state = self.A @ self.state + self.B @ u
+
+        # Predict the next state covariance
+        # (3, 3) = (3, 3) @ (3, 3) @ (3, 3) + (3, 3)
+        self.S = self.A @ self.S @ self.A.T + self.R
+
+        return self.state, self.S
+
 
     def update(self, z):
-        raise NotImplementedError
-        return self.x, self.S
+        # raise NotImplementedError
+
+        # Compute the Kalman gain
+        # (3, 2) = (3, 3) @ (3, 2) @ ((2, 3) @ (3, 3) @ (3, 2) + (2, 2))^-1
+        #        = (3, 3) @ (3, 2) @ (2, 2)^-1
+        K = self.S @ self.C.T @ np.linalg.inv(self.C @ self.S @ self.C.T + self.Q)
+
+        # Compute the measurement residual
+        # (2, 1) = (2, 1) - (2, 3) @ (3, 1)
+        y = z - self.C @ self.state
+
+        # Update the state
+        # (3, 1) = (3, 1) + (3, 2) @ (2, 1)
+        self.state = self.state + K @ y
+
+        # Update the state covariance
+        # (3, 3) = ((3, 3) - (3, 2) @ (2, 3)) @ (3, 3)
+        self.S = (np.identity(3) - K @ self.C) @ self.S
+
+        return self.state, self.S
