@@ -19,10 +19,10 @@ class KalmanFilter:
         ])
 
         # State transition error
-        self.R = np.identity(3) * 1
+        self.R = np.identity(3) * 0.001
 
         # Measurement error
-        self.Q = np.identity(2) * 1
+        self.Q = np.identity(2) * 1000
 
     def predict(self, u):
         # raise NotImplementedError
