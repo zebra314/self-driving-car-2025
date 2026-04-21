@@ -1,0 +1,21 @@
+services:
+  ros1_dev:
+    build: .
+    container_name: ros1_container
+    network_mode: host
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./src:/ros_ws/src
+      - ./data:/ros_ws/data
+    stdin_open: true
+    tty: true
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
