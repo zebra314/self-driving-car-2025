@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1-mesa-glx \
     libglib2.0-0 \
     tmux \
+    python3-tk \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install --no-cache-dir \
@@ -25,7 +26,7 @@ RUN pip3 install --no-cache-dir \
     pycryptodomex \
     rosbags
 
-WORKDIR /ros_ws
+WORKDIR /catkin_ws
 
 # Automate environment sourcing for all new terminals
 RUN echo "source /opt/ros/noetic/setup.bash" >> ~/.bashrc

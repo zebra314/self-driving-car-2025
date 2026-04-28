@@ -8,14 +8,15 @@ services:
       - QT_X11_NO_MITSHM=1
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - ./src:/ros_ws/src
-      - ./data:/ros_ws/data
+      - ./src:/catkin_ws/src
+      - ./data:/catkin_ws/data
+      - ./result:/catkin_ws/result
     stdin_open: true
     tty: true
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

@@ -19,7 +19,7 @@ class Fusion:
         rospy.on_shutdown(self.shutdown)
         self.posePub = rospy.Publisher('/pred', Odometry, queue_size = 10)
         self.EKF = None
-        
+
         self.gt_list = [[], []]
         self.est_list = [[], []]
         self.initial = False
@@ -28,30 +28,33 @@ class Fusion:
         print("shuting down fusion.py")
 
     def predictPublish(self):
-        
+
         predPose = Odometry()
         predPose.header.frame_id = 'origin'
+        predPose.header.stamp = rospy.Time.now()
+
         # change to the state x and state y from EKF
-        predPose.pose.pose.position.x = ???
-        predPose.pose.pose.position.y = ???
-        
+        predPose.pose.pose.position.x = self.EKF.pose[0, 0]
+        predPose.pose.pose.position.y = self.EKF.pose[1, 0]
+
         # Change to the state yaw from EKF
-        quaternion = quaternion_from_euler(0, 0, ???)
+        quaternion = quaternion_from_euler(0, 0, self.EKF.pose[2, 0])
         predPose.pose.pose.orientation.x = quaternion[0]
         predPose.pose.pose.orientation.y = quaternion[1]
         predPose.pose.pose.orientation.z = quaternion[2]
         predPose.pose.pose.orientation.w = quaternion[3]
-        
+
         # Change to the covariance matrix of [x, y, yaw] from EKF
-        predPose.pose.covariance = [???, ???, 0, 0, 0, ???,
-                                    ???, ???, 0, 0, 0, ???,
+        S = self.EKF.S
+        predPose.pose.covariance = [S[0, 0], S[0, 1], 0, 0, 0, S[0, 2],
+                                    S[1, 0], S[1, 1], 0, 0, 0, S[1, 2],
                                     0, 0, 0, 0, 0, 0,
                                     0, 0, 0, 0, 0, 0,
                                     0, 0, 0, 0, 0, 0,
-                                    ???, ???, 0, 0, 0, ???]
-                                    
+                                    S[2, 0], S[2, 1], 0, 0, 0, S[2, 2]]
+
         self.posePub.publish(predPose)
-    
+
     def odometryCallback(self, data):
         odom_x = data.pose.pose.position.x
         odom_y = data.pose.pose.position.y
@@ -61,59 +64,143 @@ class Fusion:
         ]
         _, _, odom_yaw = euler_from_quaternion(odom_quaternion)
         odom_covariance = np.array(data.pose.covariance).reshape(6, 6)
-        
-        # Design the control of EKF state from radar odometry data
-        # The data is in global frame, you may need to find a way to convert it into local frame
-        # Ex. 
-        #     Find differnence between 2 odometry data 
-        #         -> diff_x = ???
-        #         -> diff_y = ???
-        #         -> diff_yaw = ???
-        #     Calculate transformation matrix between 2 odometry data
-        #         -> transformation = last_odom_pose^-1 * current_odom_pose
-        #     etc.
-        control = ???
-        
-        if not self.initial:
-            self.initial = True
-            self.EKF = ExtendedKalmanFilter(odom_x, odom_y, odom_yaw)
-        else:
-            # Update error covriance
-            self.EKF.R = ???
-            self.EKF.predict_EKF(u = control)
 
+        if self.EKF is None:
+            self.last_odom = [odom_x, odom_y, odom_yaw]
+            self.EKF = ExtendedKalmanFilter(odom_x, odom_y, odom_yaw)
+            return
+
+        if not hasattr(self, 'last_odom') or self.last_odom is None:
+            self.last_odom = [odom_x, odom_y, odom_yaw]
+            return
+
+        dx = odom_x - self.last_odom[0]
+        dy = odom_y - self.last_odom[1]
+        dyaw = odom_yaw - self.last_odom[2]
+
+        while dyaw > np.pi: dyaw -= 2.0 * np.pi
+        while dyaw < -np.pi: dyaw += 2.0 * np.pi
+
+        last_yaw = self.last_odom[2]
+        diff_x_local = dx * cos(last_yaw) + dy * sin(last_yaw)
+        diff_y_local = -dx * sin(last_yaw) + dy * cos(last_yaw)
+
+        control = [diff_x_local, diff_y_local, dyaw]
+        self.last_odom = [odom_x, odom_y, odom_yaw]
+
+        self.EKF.R = np.array([
+            [odom_covariance[0, 0], odom_covariance[0, 1], odom_covariance[0, 5]],
+            [odom_covariance[1, 0], odom_covariance[1, 1], odom_covariance[1, 5]],
+            [odom_covariance[5, 0], odom_covariance[5, 1], odom_covariance[5, 5]]
+        ])
+
+        self.EKF.predict(u = control)
         self.predictPublish()
-        
+
     def gpsCallback(self, data):
         gps_x = data.pose.pose.position.x
         gps_y = data.pose.pose.position.y
         gps_covariance = np.array(data.pose.covariance).reshape(6, 6)
-        
-        # Design the measurement of EKF state from GPS data
-        # Ex. 
-        #     Use GPS directly
-        #     Find a approximate yaw
-        #     etc.
-        measurement = ???
-        
-        if not self.initial:
-            self.EKF = ExtendedKalmanFilter(gps_x, gps_y)
-            self.initial = True
-        else:
-            # Update error covriance
-            self.EKF.Q = ???
-            self.EKF.update(z = measurement)
-            
+
+        measurement = [gps_x, gps_y]
+
+        if self.EKF is None:
+            self.EKF = ExtendedKalmanFilter(gps_x, gps_y, 0.0)
+            return
+
+        self.EKF.Q = np.array([
+            [gps_covariance[0, 0], gps_covariance[0, 1]],
+            [gps_covariance[1, 0], gps_covariance[1, 1]]
+        ])
+        self.EKF.update(z = measurement)
         self.predictPublish()
-        return
-    
+
+    # def odometryCallback(self, data):
+    #     odom_x = data.pose.pose.position.x
+    #     odom_y = data.pose.pose.position.y
+    #     odom_quaternion = [
+    #         data.pose.pose.orientation.x, data.pose.pose.orientation.y,
+    #         data.pose.pose.orientation.z, data.pose.pose.orientation.w
+    #     ]
+    #     _, _, odom_yaw = euler_from_quaternion(odom_quaternion)
+    #     odom_covariance = np.array(data.pose.covariance).reshape(6, 6)
+
+    #     # Design the control of EKF state from radar odometry data
+    #     # The data is in global frame, you may need to find a way to convert it into local frame
+    #     # Ex.
+    #     #     Find differnence between 2 odometry data
+    #     #         -> diff_x = ???
+    #     #         -> diff_y = ???
+    #     #         -> diff_yaw = ???
+    #     #     Calculate transformation matrix between 2 odometry data
+    #     #         -> transformation = last_odom_pose^-1 * current_odom_pose
+    #     #     etc.
+    #     # control = ???
+
+    #     if not self.initial:
+    #         self.initial = True
+    #         self.last_odom = [odom_x, odom_y, odom_yaw]
+    #         self.EKF = ExtendedKalmanFilter(odom_x, odom_y, odom_yaw)
+    #     else:
+    #         # Calculate difference in global frame
+    #         dx = odom_x - self.last_odom[0]
+    #         dy = odom_y - self.last_odom[1]
+    #         dyaw = odom_yaw - self.last_odom[2]
+
+    #         # Normalize angle difference
+    #         while dyaw > np.pi: dyaw -= 2.0 * np.pi
+    #         while dyaw < -np.pi: dyaw += 2.0 * np.pi
+
+    #         # Convert global difference to local frame control input
+    #         last_yaw = self.last_odom[2]
+    #         diff_x_local = dx * cos(last_yaw) + dy * sin(last_yaw)
+    #         diff_y_local = -dx * sin(last_yaw) + dy * cos(last_yaw)
+
+    #         control = [diff_x_local, diff_y_local, dyaw]
+    #         self.last_odom = [odom_x, odom_y, odom_yaw]
+
+    #         # Extract x, y, yaw covariance for R
+    #         self.EKF.R = np.array([
+    #             [odom_covariance[0, 0], odom_covariance[0, 1], odom_covariance[0, 5]],
+    #             [odom_covariance[1, 0], odom_covariance[1, 1], odom_covariance[1, 5]],
+    #             [odom_covariance[5, 0], odom_covariance[5, 1], odom_covariance[5, 5]]
+    #         ])
+
+    #         self.EKF.predict(u = control)
+    #     self.predictPublish()
+
+    # def gpsCallback(self, data):
+    #     gps_x = data.pose.pose.position.x
+    #     gps_y = data.pose.pose.position.y
+    #     gps_covariance = np.array(data.pose.covariance).reshape(6, 6)
+
+    #     # Design the measurement of EKF state from GPS data
+    #     # Ex.
+    #     #     Use GPS directly
+    #     #     Find a approximate yaw
+    #     #     etc.
+    #     measurement = [gps_x, gps_y]
+
+    #     if not self.initial:
+    #         self.EKF = ExtendedKalmanFilter(gps_x, gps_y, 0.0)
+    #         self.initial = True
+    #     else:
+    #         # Extract x, y covariance for Q
+    #         self.EKF.Q = np.array([
+    #             [gps_covariance[0, 0], gps_covariance[0, 1]],
+    #             [gps_covariance[1, 0], gps_covariance[1, 1]]
+    #         ])
+    #         self.EKF.update(z = measurement)
+    #     self.predictPublish()
+    #     return
+
     def gtCallback(self, data):
         self.gt_list[0].append(data.pose.pose.position.x)
         self.gt_list[1].append(data.pose.pose.position.y)
         if self.EKF is not None:
             # Change to the state x and state y from EKF
-            self.est_list[0].append(???) 
-            self.est_list[1].append(???)
+            self.est_list[0].append(self.EKF.pose[0, 0])
+            self.est_list[1].append(self.EKF.pose[1, 0])
         return
 
     def plot_path(self):
@@ -125,13 +212,13 @@ class Fusion:
         plt.plot(self.est_list[0], self.est_list[1], alpha=0.5, linewidth=3, label='Estimation path')
         plt.title("KF fusion odometry result comparison")
         plt.legend()
-        if not os.path.exists("/root/catkin_ws/result"):
+        if not os.path.exists("/catkin_ws/result"):
             print("not exist")
-            os.mkdir("/root/catkin_ws/result")
-        plt.savefig("/root/catkin_ws/result/result.png")
+            os.mkdir("/catkin_ws/result")
+        plt.savefig("/catkin_ws/result/result.png")
         plt.show()
         return
-    
+
 if __name__ == '__main__':
     rospy.init_node('kf', anonymous=True)
     fusion = Fusion()
